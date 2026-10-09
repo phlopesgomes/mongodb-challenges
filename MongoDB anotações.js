@@ -359,6 +359,34 @@ db.series.find().limit(5)
 /// Este prompt retornará apenas os 5 primeiros documentos da coleção "series", em ordem alfabética crescente pelo campo "Série".
 
 
+//// 3. OPERADORES DE ELEMENTO E AVALIAÇÃO:
+
+//// $exists >> Verifica se determinado campo existe no documento.
+db.series.find({ "Temporadas disponíveis": { $exists: true } })
+/// Traz apenas as séries que possuem o campo "Temporadas disponíveis" cadastrado no documento.
+
+//// $regex >> Realiza buscas por padrões de texto/expressões regulares ("i" ignora maiúsculas/minúsculas).
+db.series.find({ "Série": { $regex: "Bad", $options: "i" } })
+/// Retorna séries que contenham a palavra "Bad" no título (ex: "Breaking Bad").
+
+//// $mod >> Filtra por operação de resto da divisão passando um array [divisor, resto].
+db.series.find({ "Episodios": { $mod: [2, 0] } })
+/// Retorna documentos onde o campo "Episodios" possui um número par (resto 0 ao dividir por 2).
+
+
+//// 4. OPERADORES DE ARRAY (VETORES):
+
+//// $all >> Filtra documentos onde o array contém TODOS os elementos informados.
+db.series.find({ "Genero": { $all: ["Ação", "Drama"] } })
+/// Retorna séries que pertencem aos gêneros "Ação" E "Drama" ao mesmo tempo.
+
+//// $size >> Filtra documentos onde o array possui EXATAMENTE a quantidade de itens informada.
+db.series.find({ "Genero": { $size: 3 } })
+/// Retorna séries que possuem exatamente 3 gêneros cadastrados na sua lista.
+
+//// $elemMatch >> Garante que pelo menos UM elemento do array atenda a TODAS as condições passadas juntas.
+db.series.find({ "Avaliacoes": { $elemMatch: { "nota": { $gt: 8 }, "site": "IMDb" } } })
+/// Retorna documentos onde a mesma avaliação do IMDb teve nota maior que 8.
 
 
 /////////////////////////////////////////// ATUALIZANDO DOCUMENTOS EM UMA COLEÇÃO ///////////////////////////////////////////
@@ -394,6 +422,14 @@ db.series.updateMany(
   { $set: { "Categoria": "Clássico" } }
 )
 /// Atualiza todos os documentos da coleção "series" que possuem o campo "Ano de lançamento" com valor menor que 2015, adicionando o campo "Categoria" com valor "Clássico".
+
+//// -- OPERADORES DE ATUALIZAÇÃO PARA ARRAYS:
+// - $push : Adiciona um item a um array existente. Se o campo de array não existir no documento, o MongoDB cria um novo pra você.
+db.series.updateOne(
+  { "Série": "The Office" },
+  { $push: { "Genero": "Comédia" } }
+)
+/// Atualiza o documento da série "The Office", empurrando (push) a palavra "Comédia" para dentro da lista do campo "Genero".
 
 
 
@@ -470,3 +506,90 @@ db.series.deleteMany(
 //// -- ATENÇÃO AO USAR DELETEMANY SEM FILTRO:
 // Se o método deleteMany() for executado com as chaves vazias {}, TODOS os documentos da coleção serão permanentemente excluídos.
 db.series.deleteMany({})
+
+
+
+
+/////////////////////////////////////////// AGGREGATION PIPELINE (AGREGAÇÃO) ///////////////////////////////////////////
+
+/// -- O Aggregation Framework é a ferramenta para transformar e analisar dados estruturados.
+// Ele funciona como uma "linha de montagem" (pipeline) onde os documentos entram, passam por estágios (stages) e saem processados no final.
+// Utilizamos o método db.colecao.aggregate([ ...estágios... ])
+
+
+//// 1. ESTÁGIOS DE AGREGAÇÃO (STAGES):
+
+//// $unwind >> Desconstrói um array no documento, criando um documento separado para cada elemento da lista.
+db.series.aggregate([
+  { $unwind: "$Genero" }
+])
+/// Transforma um documento com Genero: ["Ação", "Drama"] em 2 documentos individuais, um para "Ação" e outro para "Drama".
+
+//// $out >> Salva os documentos resultantes do pipeline em uma nova coleção (ou substitui uma existente).
+db.vendas.aggregate([
+  { $match: { "status": "Concluído" } },
+  { $out: "vendas_concluidas" }
+])
+/// Escreve o resultado filtrado diretamente na coleção "vendas_concluidas". Deve ser obrigatoriamente a última etapa do pipeline.
+
+
+//// 2. OPERADORES DE EXPRESSÃO (Usados dentro de $project, $group, $addFields, etc.):
+
+//// $multiply >> Multiplica valores numéricos ou campos.
+db.vendas.aggregate([
+  { $project: { "total": { $multiply: ["$Preco", "$Quantidade"] } } }
+])
+/// Multiplica o valor do campo "Preco" pela "Quantidade" em cada documento.
+
+//// $subtract >> Subtrai o segundo valor do primeiro (valor1 - valor2).
+db.vendas.aggregate([
+  { $project: { "Lucro": { $subtract: ["$ValorVenda", "$CustoProduto"] } } }
+])
+/// Subtrai o campo "CustoProduto" do "ValorVenda" para calcular o lucro do item.
+
+//// $concat >> Junta (concatena) duas ou mais strings ou campos de texto numa única string.
+db.usuarios.aggregate([
+  { $project: { "NomeCompleto": { $concat: ["$Nome", " - ", "$Sobrenome"] } } }
+])
+/// Une o campo "Nome", o hífen " - " e o "Sobrenome" em um único campo chamado "NomeCompleto".
+
+//// $dateToString >> Converte e formata um objeto de data (ISODate) em string, ajustando o fuso horário (timezone).
+db.vendas.aggregate([
+  { $project: { 
+      "DataFormatada": { 
+        $dateToString: { format: "%d/%m/%Y %H:%M", date: "$DataVenda", timezone: "America/Sao_Paulo" } 
+      } 
+  } }
+])
+/// Formata a data para dia/mês/ano hora:minuto considerando o fuso horário local ("America/Sao_Paulo" ou "-03:00").
+
+//// $hour >> Extrai a hora (número de 0 a 23) de um campo de data considerando o fuso horário.
+db.vendas.aggregate([
+  { $project: { "HoraDaVenda": { $hour: { date: "$DataVenda", timezone: "America/Sao_Paulo" } } } }
+])
+/// Extrai apenas a hora exata da transação no fuso horário local.
+
+
+//// 3. APLICAÇÃO PRÁTICA (EXEMPLO DE AGGREGATE COMPLETO):
+
+db.vendas.aggregate([
+  // 1º Estágio ($match): Filtra apenas os documentos com status concluído
+  { $match: { "status": "Concluído" } },
+  
+  // 2º Estágio ($project): Molda a saída aplicando cálculos matemáticos e de data
+  { $project: {
+      "Produto": 1,
+      "Lucro": { $subtract: ["$ValorVenda", "$CustoProduto"] },
+      "DataFormatada": { 
+          $dateToString: { 
+              format: "%d/%m/%Y %H:%M", 
+              date: "$DataVenda",
+              timezone: "America/Sao_Paulo" 
+          } 
+      },
+      "HoraDaVenda": { $hour: { date: "$DataVenda", timezone: "America/Sao_Paulo" } }
+  }},
+
+  // 3º Estágio ($out): Salva esse relatório processado numa coleção nova
+  { $out: "relatorio_lucros_final" }
+])
